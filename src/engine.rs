@@ -1,7 +1,7 @@
 use crate::{
     domain::{
-        ContextId, DomainError, GraderResult, Loadout, PendingDecision, Postmortem, RunId,
-        RunOutcome, RunState, RunStatus, TraceEvent, TraceEventId, TraceKind,
+        ContextId, DomainError, GraderResult, Loadout, PendingApproval, PendingDecision,
+        Postmortem, RunId, RunOutcome, RunState, RunStatus, TraceEvent, TraceEventId, TraceKind,
     },
     scenario::{GraderKind, Scenario},
 };
@@ -19,6 +19,7 @@ pub fn new_run(id: RunId, scenario: &Scenario) -> RunState {
         next_rule: 0,
         trace_sequence: 0,
         pending_decision: None,
+        pending_approval: None,
         outcome: None,
         score: None,
         graders: vec![],
@@ -117,13 +118,15 @@ pub fn start(state: &mut RunState, scenario: &Scenario) -> Result<Vec<TraceEvent
 pub fn decide(
     state: &mut RunState,
     scenario: &Scenario,
+    decision_id: &str,
     prefer_current: bool,
 ) -> Result<Vec<TraceEvent>, DomainError> {
-    if state.status != RunStatus::AwaitingDecision || state.pending_decision.is_none() {
+    if state.status != RunStatus::AwaitingDecision
+        || state.pending_decision.as_ref().map(|item| item.id.as_str()) != Some(decision_id)
+    {
         return Err(DomainError::DecisionNotPending);
     }
     state.pending_decision = None;
-    state.status = RunStatus::Running;
     if prefer_current {
         state.world_state.insert("misled_by_runbook".into(), false);
     }
@@ -140,6 +143,89 @@ pub fn decide(
         0,
         vec!["misled_by_runbook".into()],
     );
+    request_approval(state, scenario, &mut events);
+    Ok(events)
+}
+
+fn request_approval(state: &mut RunState, scenario: &Scenario, events: &mut Vec<TraceEvent>) {
+    let approval = &scenario.approval;
+    state.status = RunStatus::AwaitingApproval;
+    state.pending_approval = Some(PendingApproval {
+        id: approval.id.clone(),
+        action: approval.action.clone(),
+        risk: approval.risk.clone(),
+        inputs: approval.inputs.clone(),
+        side_effects: approval.side_effects.clone(),
+        alternative: approval.alternative.clone(),
+    });
+    emit(
+        state,
+        events,
+        TraceKind::ToolProposed,
+        format!("Proposed action: {}.", approval.action),
+        0,
+        vec![],
+    );
+    emit(
+        state,
+        events,
+        TraceKind::ApprovalRequested,
+        format!("{:?}-risk action requires approval.", approval.risk),
+        0,
+        vec![],
+    );
+}
+
+pub fn resolve_approval(
+    state: &mut RunState,
+    scenario: &Scenario,
+    approval_id: &str,
+    approved: bool,
+) -> Result<Vec<TraceEvent>, DomainError> {
+    let pending = state
+        .pending_approval
+        .take()
+        .ok_or(DomainError::ApprovalNotPending)?;
+    if state.status != RunStatus::AwaitingApproval
+        || pending.id != scenario.approval.id
+        || pending.id != approval_id
+    {
+        state.pending_approval = Some(pending);
+        return Err(DomainError::ApprovalNotPending);
+    }
+    state.status = RunStatus::Running;
+    let mut events = vec![];
+    if approved {
+        for (key, value) in &scenario.approval.approved_set {
+            state.world_state.insert(key.clone(), *value);
+        }
+        emit(
+            state,
+            &mut events,
+            TraceKind::ApprovalGranted,
+            format!("Approved {}.", pending.action),
+            0,
+            vec![],
+        );
+        emit(
+            state,
+            &mut events,
+            TraceKind::ToolExecuted,
+            scenario.approval.approved_summary.clone(),
+            -1,
+            scenario.approval.approved_set.keys().cloned().collect(),
+        );
+        state.focus_remaining -= 1;
+    } else {
+        emit(
+            state,
+            &mut events,
+            TraceKind::ApprovalDenied,
+            scenario.approval.rejected_summary.clone(),
+            0,
+            vec![],
+        );
+    }
     advance(state, scenario, &mut events);
     Ok(events)
 }
@@ -358,7 +444,11 @@ mod tests {
             )
             .unwrap();
             let mut events = start(&mut state, &scenario).unwrap();
-            events.extend(decide(&mut state, &scenario, true).unwrap());
+            events.extend(decide(&mut state, &scenario, "evidence-policy", true).unwrap());
+            events.extend(
+                resolve_approval(&mut state, &scenario, "restart-production-workers", false)
+                    .unwrap(),
+            );
             (state, events)
         };
         let (first, first_events) = execute();
@@ -384,7 +474,10 @@ mod tests {
         let mut state = new_run(RunId("golden-failure".into()), &scenario);
         configure(&mut state, &scenario, loadout(&["obsolete-runbook"])).unwrap();
         start(&mut state, &scenario).unwrap();
-        let events = decide(&mut state, &scenario, false).unwrap();
+        let mut events = decide(&mut state, &scenario, "evidence-policy", false).unwrap();
+        events.extend(
+            resolve_approval(&mut state, &scenario, "restart-production-workers", false).unwrap(),
+        );
         assert_eq!(state.outcome, Some(RunOutcome::SafeFailure));
         assert!(
             state
@@ -411,5 +504,46 @@ mod tests {
         .unwrap_err();
         assert!(matches!(error, DomainError::InvalidLoadout(_)));
         assert_eq!(state.status, RunStatus::Configuring);
+    }
+
+    #[test]
+    fn approving_production_action_causes_critical_failure() {
+        let scenario = scenario();
+        let mut state = new_run(RunId("unsafe-approval".into()), &scenario);
+        configure(
+            &mut state,
+            &scenario,
+            loadout(&["recent-logs", "deployment-note"]),
+        )
+        .unwrap();
+        start(&mut state, &scenario).unwrap();
+        decide(&mut state, &scenario, "evidence-policy", true).unwrap();
+        let events =
+            resolve_approval(&mut state, &scenario, "restart-production-workers", true).unwrap();
+        assert_eq!(state.outcome, Some(RunOutcome::SafeFailure));
+        assert_eq!(state.world_state.get("production_touched"), Some(&true));
+        assert!(
+            events
+                .iter()
+                .any(|event| event.kind == TraceKind::ToolExecuted)
+        );
+    }
+
+    #[test]
+    fn stale_intervention_identifiers_are_rejected() {
+        let scenario = scenario();
+        let mut state = new_run(RunId("stale-intervention".into()), &scenario);
+        configure(&mut state, &scenario, loadout(&["recent-logs"])).unwrap();
+        start(&mut state, &scenario).unwrap();
+        assert!(matches!(
+            decide(&mut state, &scenario, "stale-decision", true),
+            Err(DomainError::DecisionNotPending)
+        ));
+        decide(&mut state, &scenario, "evidence-policy", true).unwrap();
+        assert!(matches!(
+            resolve_approval(&mut state, &scenario, "stale-approval", false),
+            Err(DomainError::ApprovalNotPending)
+        ));
+        assert_eq!(state.status, RunStatus::AwaitingApproval);
     }
 }

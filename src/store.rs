@@ -103,3 +103,90 @@ fn status_name(state: &RunState) -> String {
 fn persistence(error: impl std::fmt::Display) -> DomainError {
     DomainError::Persistence(error.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        domain::RunId,
+        engine,
+        scenario::{Scenario, ScenarioRegistry},
+    };
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn scenario() -> Scenario {
+        ScenarioRegistry::load_embedded()
+            .unwrap()
+            .get("context-vault")
+            .unwrap()
+            .clone()
+    }
+
+    fn database() -> (PathBuf, String) {
+        let path = std::env::temp_dir().join(format!("tracebound-test-{}.sqlite3", Uuid::new_v4()));
+        let url = format!("sqlite://{}?mode=rwc", path.display());
+        (path, url)
+    }
+
+    #[tokio::test]
+    async fn persisted_run_reopens_after_store_restart() {
+        let (path, url) = database();
+        let id = RunId("restart-recovery".into());
+        {
+            let store = Store::connect(&url).await.unwrap();
+            let state = engine::new_run(id.clone(), &scenario());
+            store.create_run(&state).await.unwrap();
+        }
+        let reopened = Store::connect(&url).await.unwrap();
+        let restored = reopened.load_run(&id).await.unwrap();
+        assert_eq!(restored.id, id);
+        assert_eq!(restored.focus_remaining, scenario().focus_budget);
+        drop(reopened);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn run_and_trace_update_roll_back_together() {
+        let (path, url) = database();
+        let store = Store::connect(&url).await.unwrap();
+        let scenario = scenario();
+        let id = RunId("atomic-update".into());
+        let mut state = engine::new_run(id.clone(), &scenario);
+        store.create_run(&state).await.unwrap();
+
+        state.status = crate::domain::RunStatus::Ready;
+        store.save_run(&state, &[]).await.unwrap();
+        let before_failed_save = state.clone();
+
+        let mut invalid_update = state.clone();
+        invalid_update.focus_remaining = 1;
+        let duplicate = crate::domain::TraceEvent {
+            id: crate::domain::TraceEventId("duplicate".into()),
+            run_id: id.clone(),
+            sequence: 1,
+            elapsed_ms: 0,
+            actor: "test".into(),
+            kind: crate::domain::TraceKind::WarningRaised,
+            summary: "duplicate".into(),
+            payload: serde_json::json!({}),
+            focus_delta: 0,
+            related_state_keys: vec![],
+        };
+        store
+            .save_run(&state, std::slice::from_ref(&duplicate))
+            .await
+            .unwrap();
+        let error = store
+            .save_run(&invalid_update, &[duplicate])
+            .await
+            .unwrap_err();
+        assert!(matches!(error, DomainError::Persistence(_)));
+
+        let restored = store.load_run(&id).await.unwrap();
+        assert_eq!(restored.focus_remaining, before_failed_save.focus_remaining);
+        assert_eq!(store.trace_after(&id, 0).await.unwrap().len(), 1);
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+}

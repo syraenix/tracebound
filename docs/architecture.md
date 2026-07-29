@@ -15,6 +15,11 @@ Scenario TOML → scenario registry → engine
 - `app` coordinates scenario, engine, and persistence operations.
 - `web` maps HTTP requests to application operations and renders server-side HTML.
 
+The browser flow is functional with standard links and forms. A pinned, vendored
+copy of htmx 2.0.7 progressively boosts navigation without adding a runtime network
+dependency. A small embedded script consumes the SSE trace endpoint with
+`EventSource`; all trace content is inserted with DOM text nodes rather than HTML.
+
 The crate can be split into the PRD’s proposed workspace without changing these
 dependencies. Scenario effects are declarative. They never execute cartridge code,
 shell commands, filesystem operations, or network requests.
@@ -31,3 +36,6 @@ The engine accepts only a scenario, persisted run state, and an explicit command
 It returns the next run state and new trace events. The store writes both in one
 transaction.
 
+Interventions use persisted, strongly typed pending records. Both decision and
+approval commands must present the exact pending identifier, preventing stale form
+submissions from resolving a newer intervention.

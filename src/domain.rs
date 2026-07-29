@@ -25,6 +25,7 @@ pub enum RunStatus {
     Configuring,
     Ready,
     Running,
+    AwaitingApproval,
     AwaitingDecision,
     Completed,
     Failed,
@@ -42,6 +43,15 @@ pub enum AutonomyLevel {
 pub enum ApprovalPolicy {
     AllChanges,
     HighRisk,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskLevel {
+    Low,
+    Moderate,
+    High,
+    Critical,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +77,16 @@ pub struct PendingDecision {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PendingApproval {
+    pub id: String,
+    pub action: String,
+    pub risk: RiskLevel,
+    pub inputs: String,
+    pub side_effects: String,
+    pub alternative: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunState {
     pub id: RunId,
     pub scenario_id: ScenarioId,
@@ -77,6 +97,7 @@ pub struct RunState {
     pub next_rule: usize,
     pub trace_sequence: u64,
     pub pending_decision: Option<PendingDecision>,
+    pub pending_approval: Option<PendingApproval>,
     pub outcome: Option<RunOutcome>,
     pub score: Option<u32>,
     pub graders: Vec<GraderResult>,
@@ -91,6 +112,11 @@ pub enum TraceKind {
     WarningRaised,
     DecisionRequested,
     DecisionResolved,
+    ToolProposed,
+    ApprovalRequested,
+    ApprovalGranted,
+    ApprovalDenied,
+    ToolExecuted,
     StateChanged,
     EvaluatorExecuted,
     BudgetChanged,
@@ -148,6 +174,8 @@ pub enum DomainError {
     InvalidScenario(String),
     #[error("decision is no longer pending")]
     DecisionNotPending,
+    #[error("approval is no longer pending")]
+    ApprovalNotPending,
     #[error("persistence failed: {0}")]
     Persistence(String),
 }

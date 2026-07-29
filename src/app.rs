@@ -55,10 +55,28 @@ impl AppService {
         Ok(state)
     }
 
-    pub async fn decide(&self, id: &str, prefer_current: bool) -> Result<RunState, DomainError> {
+    pub async fn decide(
+        &self,
+        id: &str,
+        decision_id: &str,
+        prefer_current: bool,
+    ) -> Result<RunState, DomainError> {
         let mut state = self.load_run(id).await?;
         let scenario = self.scenario(&state.scenario_id.0)?;
-        let events = engine::decide(&mut state, scenario, prefer_current)?;
+        let events = engine::decide(&mut state, scenario, decision_id, prefer_current)?;
+        self.store.save_run(&state, &events).await?;
+        Ok(state)
+    }
+
+    pub async fn resolve_approval(
+        &self,
+        id: &str,
+        approval_id: &str,
+        approved: bool,
+    ) -> Result<RunState, DomainError> {
+        let mut state = self.load_run(id).await?;
+        let scenario = self.scenario(&state.scenario_id.0)?;
+        let events = engine::resolve_approval(&mut state, scenario, approval_id, approved)?;
         self.store.save_run(&state, &events).await?;
         Ok(state)
     }

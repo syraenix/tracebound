@@ -38,14 +38,15 @@ encounter. Campaign progression and the other five encounters remain later work.
 - [x] SSE trace endpoint with `Last-Event-ID` recovery
 - [x] Postmortem and report export
 - [x] Keyboard-accessible semantic pages and visible focus styles
-- [ ] Vendored htmx enhancement (the complete flow currently uses plain HTML forms)
-- [ ] Approval intervention (domain model present; Context Vault uses a decision)
+- [x] Vendored htmx enhancement with a complete plain-HTML fallback
+- [x] Cartridge-driven approval intervention with risk, inputs, side effects, and alternative
 - [ ] Campaign progression and codex persistence (Milestone 5)
 
 ## Validation
 
 - [x] Unit and deterministic engine tests
 - [x] Cartridge validation exercised by every golden and web test
-- [ ] Dedicated store atomicity and restart-recovery integration tests
+- [x] Dedicated store atomicity and restart-recovery integration tests
 - [x] Web route and HTML-escaping smoke tests
+- [x] Approval-route persistence and SSE reconnect tests
 - [ ] Full accessibility audit in a browser

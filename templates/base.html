@@ -5,8 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Tracebound{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/vendor/htmx/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
 </head>
-<body>
+<body hx-boost="true" hx-target="#main" hx-select="#main" hx-swap="outerHTML" hx-push-url="true">
   <header><a href="/">TRACEBOUND // THE HARNESS BELOW</a></header>
   <main id="main">{% block content %}{% endblock %}</main>
   <footer>Local simulation. No shell, repository, cloud, or model access.</footer>

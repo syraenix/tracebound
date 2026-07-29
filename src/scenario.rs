@@ -1,4 +1,4 @@
-use crate::domain::{DomainError, ScenarioId};
+use crate::domain::{DomainError, RiskLevel, ScenarioId};
 use rust_embed::Embed;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -22,6 +22,7 @@ pub struct Scenario {
     pub initial_state: BTreeMap<String, bool>,
     pub context: Vec<ContextItem>,
     pub rules: Vec<Rule>,
+    pub approval: ApprovalIntervention,
     pub graders: Vec<Grader>,
     pub postmortem: PostmortemText,
 }
@@ -51,6 +52,19 @@ pub struct Rule {
     pub forbids_state: Vec<String>,
     pub set: BTreeMap<String, bool>,
     pub summary: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ApprovalIntervention {
+    pub id: String,
+    pub action: String,
+    pub risk: RiskLevel,
+    pub inputs: String,
+    pub side_effects: String,
+    pub alternative: String,
+    pub approved_set: BTreeMap<String, bool>,
+    pub approved_summary: String,
+    pub rejected_summary: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -153,6 +167,13 @@ pub fn validate(scenario: &Scenario) -> Result<(), DomainError> {
                     grader.id
                 )));
             }
+        }
+    }
+    for key in scenario.approval.approved_set.keys() {
+        if !scenario.initial_state.contains_key(key) {
+            return Err(DomainError::InvalidScenario(format!(
+                "approval references unknown state {key}"
+            )));
         }
     }
     Ok(())

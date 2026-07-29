@@ -12,14 +12,29 @@
   <button name="prefer_current" value="false">Follow authored procedure</button>
 </form>
 {% when None %}
+{% match run.pending_approval %}
+{% when Some with (approval) %}
+<h2>Approval required</h2>
+<dl>
+  <dt>Proposed action</dt><dd>{{ approval.action }}</dd>
+  <dt>Risk</dt><dd>{{ approval.risk|fmt("{:?}") }}</dd>
+  <dt>Inputs</dt><dd><code>{{ approval.inputs }}</code></dd>
+  <dt>Expected side effects</dt><dd>{{ approval.side_effects }}</dd>
+  <dt>Safer alternative</dt><dd>{{ approval.alternative }}</dd>
+</dl>
+<form method="post" action="/runs/{{ run.id }}/approvals/{{ approval.id }}">
+  <button name="approved" value="false">Reject action</button>
+  <button name="approved" value="true">Approve action</button>
+</form>
+{% when None %}
 {% if run.outcome.is_some() %}<a class="button" href="/runs/{{ run.id }}/postmortem">Open postmortem</a>{% endif %}
+{% endmatch %}
 {% endmatch %}
 </section>
 <section class="panel" aria-labelledby="trace-heading">
 <h2 id="trace-heading">Execution trace</h2>
-<ol class="trace" aria-live="polite">
-{% for event in events %}<li><span class="meta">#{{ event.sequence }} · {{ event.actor }}</span><br>{{ event.summary }}</li>{% endfor %}
+<ol class="trace" aria-live="polite" data-trace-url="/runs/{{ run.id }}/events">
+{% for event in events %}<li data-sequence="{{ event.sequence }}"><span class="meta">#{{ event.sequence }} · {{ event.actor }}</span><br>{{ event.summary }}</li>{% endfor %}
 </ol>
 </section></div>
 {% endblock %}
-

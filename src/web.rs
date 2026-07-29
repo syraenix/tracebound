@@ -36,6 +36,10 @@ pub fn router(service: AppService) -> Router {
             "/runs/{run_id}/decisions/{decision_id}",
             post(resolve_decision),
         )
+        .route(
+            "/runs/{run_id}/approvals/{approval_id}",
+            post(resolve_approval),
+        )
         .route("/runs/{run_id}/events", get(events))
         .route("/runs/{run_id}/postmortem", get(postmortem))
         .route("/runs/{run_id}/report.md", get(report))
@@ -169,11 +173,33 @@ struct DecisionForm {
 
 async fn resolve_decision(
     State(app): State<Arc<AppService>>,
-    Path((run_id, _decision_id)): Path<(String, String)>,
+    Path((run_id, decision_id)): Path<(String, String)>,
     Form(form): Form<DecisionForm>,
 ) -> Result<Redirect, WebError> {
-    let run = app.decide(&run_id, form.prefer_current).await?;
-    if matches!(run.status, RunStatus::Completed | RunStatus::Failed) {
+    let run = app
+        .decide(&run_id, &decision_id, form.prefer_current)
+        .await?;
+    redirect_for_run(run.status, &run_id)
+}
+
+#[derive(Deserialize)]
+struct ApprovalForm {
+    approved: bool,
+}
+
+async fn resolve_approval(
+    State(app): State<Arc<AppService>>,
+    Path((run_id, approval_id)): Path<(String, String)>,
+    Form(form): Form<ApprovalForm>,
+) -> Result<Redirect, WebError> {
+    let run = app
+        .resolve_approval(&run_id, &approval_id, form.approved)
+        .await?;
+    redirect_for_run(run.status, &run_id)
+}
+
+fn redirect_for_run(status: RunStatus, run_id: &str) -> Result<Redirect, WebError> {
+    if matches!(status, RunStatus::Completed | RunStatus::Failed) {
         Ok(Redirect::to(&format!("/runs/{run_id}/postmortem")))
     } else {
         Ok(Redirect::to(&format!("/runs/{run_id}")))
@@ -263,6 +289,8 @@ async fn static_asset(Path(path): Path<String>) -> Response {
 fn content_type(path: &str) -> &'static str {
     if path.ends_with(".css") {
         "text/css; charset=utf-8"
+    } else if path.ends_with(".js") {
+        "text/javascript; charset=utf-8"
     } else {
         "application/octet-stream"
     }
@@ -284,7 +312,8 @@ impl From<DomainError> for WebError {
             DomainError::ScenarioNotFound(_) | DomainError::RunNotFound(_) => StatusCode::NOT_FOUND,
             DomainError::InvalidTransition(_)
             | DomainError::InvalidLoadout(_)
-            | DomainError::DecisionNotPending => StatusCode::CONFLICT,
+            | DomainError::DecisionNotPending
+            | DomainError::ApprovalNotPending => StatusCode::CONFLICT,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         Self {
@@ -330,7 +359,10 @@ fn escape_html(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::{app::AppService, scenario::ScenarioRegistry, store::Store};
-    use axum::{body::Body, http::Request};
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
     use tower::ServiceExt;
 
     async fn test_router() -> Router {
@@ -341,6 +373,15 @@ mod tests {
             store,
             scenarios: ScenarioRegistry::load_embedded().expect("scenario"),
         })
+    }
+
+    async fn test_service() -> AppService {
+        AppService {
+            store: Store::connect("sqlite::memory:")
+                .await
+                .expect("in-memory store"),
+            scenarios: ScenarioRegistry::load_embedded().expect("scenario"),
+        }
     }
 
     #[tokio::test]
@@ -370,5 +411,78 @@ mod tests {
             escape_html("<script>\"bad\" & 'worse'</script>"),
             "&lt;script&gt;&quot;bad&quot; &amp; &#39;worse&#39;&lt;/script&gt;"
         );
+    }
+
+    #[tokio::test]
+    async fn approval_route_completes_persisted_safe_run() {
+        let service = test_service().await;
+        let run = service.create_run("context-vault").await.unwrap();
+        service
+            .configure(
+                &run.id.0,
+                vec!["recent-logs".into(), "deployment-note".into()],
+            )
+            .await
+            .unwrap();
+        service.start(&run.id.0).await.unwrap();
+        let awaiting = service
+            .decide(&run.id.0, "evidence-policy", true)
+            .await
+            .unwrap();
+        assert_eq!(awaiting.status, RunStatus::AwaitingApproval);
+
+        let app = router(service.clone());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/runs/{}/approvals/restart-production-workers",
+                        run.id
+                    ))
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from("approved=false"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            response.headers().get(header::LOCATION).unwrap(),
+            &format!("/runs/{}/postmortem", run.id)
+        );
+
+        let restored = service.load_run(&run.id.0).await.unwrap();
+        assert_eq!(restored.status, RunStatus::Completed);
+        assert_eq!(restored.world_state.get("production_touched"), Some(&false));
+    }
+
+    #[tokio::test]
+    async fn sse_reconnect_starts_after_last_event_id() {
+        let service = test_service().await;
+        let run = service.create_run("context-vault").await.unwrap();
+        service
+            .configure(&run.id.0, vec!["recent-logs".into()])
+            .await
+            .unwrap();
+        let started = service.start(&run.id.0).await.unwrap();
+        let app = router(service);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/runs/{}/events", run.id))
+                    .header("last-event-id", (started.trace_sequence - 1).to_string())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(response.into_body(), 16 * 1024).await.unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            text.contains(&format!("id: {}", started.trace_sequence)),
+            "unexpected SSE body: {text}"
+        );
+        assert!(!text.contains(&format!("id: {}", started.trace_sequence - 1)));
     }
 }
