@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Harness Ready · Tracebound{% endblock %}
+{% block content %}
+<section class="panel"><h1>Harness ready</h1>
+<p>The guided agent will pause when it encounters conflicting evidence.</p>
+<form method="post" action="/runs/{{ run.id }}/start"><button type="submit">Begin expedition</button></form>
+</section>
+{% endblock %}
+

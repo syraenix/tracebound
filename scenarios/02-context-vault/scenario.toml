@@ -1,0 +1,104 @@
+schema_version = 1
+id = "context-vault"
+title = "The Context Vault"
+sequence = 2
+difficulty = 1
+focus_budget = 10
+context_capacity = 5
+learning_principle = "Relevant, current evidence beats a larger pile of context."
+codex_title = "Context Is a Curated Dependency"
+
+[briefing]
+summary = "The Lantern API fails every few hours after a recent deployment."
+objective = "Identify the fault using trustworthy evidence and recommend the correct recovery."
+constraints = ["Do not touch production.", "Keep the initial context load within five Focus."]
+
+[initial_state]
+cause_identified = false
+misled_by_runbook = false
+deployment_evidence_loaded = false
+logs_loaded = false
+
+[[context]]
+id = "recent-logs"
+title = "Recent Failure Logs"
+description = "Current logs showing connection-pool starvation after the deploy."
+cost = 2
+trust = "high"
+freshness = "current"
+effects = { logs_loaded = true }
+
+[[context]]
+id = "deployment-note"
+title = "Deployment Note 47"
+description = "The current release reduced the database connection pool."
+cost = 2
+trust = "high"
+freshness = "current"
+effects = { deployment_evidence_loaded = true }
+
+[[context]]
+id = "obsolete-runbook"
+title = "Legacy Recovery Runbook"
+description = "A detailed runbook for a retired queue-based architecture."
+cost = 3
+trust = "low"
+freshness = "stale"
+effects = { misled_by_runbook = true }
+
+[[context]]
+id = "architecture-map"
+title = "Service Architecture Map"
+description = "A broad but accurate map with no release-specific evidence."
+cost = 2
+trust = "medium"
+freshness = "current"
+effects = {}
+
+[[rules]]
+id = "correlate-current-evidence"
+requires_all_state = ["logs_loaded", "deployment_evidence_loaded"]
+forbids_state = ["misled_by_runbook"]
+set = { cause_identified = true }
+summary = "Correlated the failure window with the reduced connection pool."
+
+[[rules]]
+id = "follow-stale-runbook"
+requires_all_state = ["misled_by_runbook"]
+forbids_state = []
+set = {}
+summary = "The agent followed obsolete queue-restart guidance and found no matching component."
+
+[[graders]]
+id = "cause-identified"
+description = "The actual connection-pool regression was identified."
+kind = "state_equals"
+path = "cause_identified"
+expected = true
+weight = 60
+critical = true
+failure = "The run did not identify the deployment regression."
+
+[[graders]]
+id = "stale-context-rejected"
+description = "The obsolete runbook did not steer the investigation."
+kind = "state_equals"
+path = "misled_by_runbook"
+expected = false
+weight = 25
+critical = false
+failure = "Stale guidance displaced current evidence."
+
+[[graders]]
+id = "budget-preserved"
+description = "At least four Focus remained for investigation."
+kind = "focus_at_least"
+expected_number = 4
+weight = 15
+critical = false
+failure = "The initial context load consumed too much Focus."
+
+[postmortem]
+success = "You paired current operational evidence with the release change and isolated the regression."
+failure = "The harness lacked a clean pair of current evidence, so the agent could not ground its diagnosis."
+alternative = "Load Recent Failure Logs and Deployment Note 47; leave the obsolete runbook sealed."

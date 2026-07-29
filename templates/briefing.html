@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ scenario.title }} · Tracebound{% endblock %}
+{% block content %}
+<article class="panel">
+  <p class="meta">ENCOUNTER {{ scenario.sequence }} · DIFFICULTY {{ scenario.difficulty }}</p>
+  <h1>{{ scenario.title }}</h1>
+  <p>{{ scenario.briefing.summary }}</p>
+  <h2>Objective</h2><p>{{ scenario.briefing.objective }}</p>
+  <h2>Constraints</h2>
+  <ul>{% for item in scenario.briefing.constraints %}<li>{{ item }}</li>{% endfor %}</ul>
+  <form method="post" action="/runs">
+    <input type="hidden" name="scenario_id" value="{{ scenario.id }}">
+    <button type="submit">Assemble harness</button>
+  </form>
+</article>
+{% endblock %}
+

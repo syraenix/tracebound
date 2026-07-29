@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Postmortem · Tracebound{% endblock %}
+{% block content %}
+<article class="panel">
+<p class="meta">EXPEDITION POSTMORTEM</p>
+<h1>{{ scenario.title }}: {{ postmortem.outcome|fmt("{:?}") }}</h1>
+<p><strong>Score:</strong> {{ postmortem.score }}/100</p><p>{{ postmortem.summary }}</p>
+<h2>Grader results</h2>
+<ul>{% for grader in postmortem.graders %}<li>{% if grader.passed %}PASS{% else %}FAIL{% endif %} — {{ grader.description }} ({{ grader.weight }})<br><span class="meta">{{ grader.explanation }}</span></li>{% endfor %}</ul>
+<h2>Critical decision</h2><p>{{ postmortem.critical_decision }}</p>
+<h2>First warning</h2><p>{{ postmortem.first_warning }}</p>
+<h2>Try next</h2><p>{{ postmortem.alternative }}</p>
+<blockquote>{{ postmortem.learning_principle }}</blockquote>
+<p>Codex unlocked: <strong>{{ scenario.codex_title }}</strong></p>
+<a class="button" href="/runs/{{ run_id }}/report.md">Export Markdown report</a>
+<a class="button" href="/encounters/context-vault">Replay</a>
+</article>
+{% endblock %}
+

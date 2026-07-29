@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Expedition · Tracebound{% endblock %}
+{% block content %}
+<div class="grid">
+<section class="panel"><h1>{{ scenario.title }}</h1>
+<p><strong>Focus:</strong> {{ run.focus_remaining }}</p>
+{% match run.pending_decision %}
+{% when Some with (decision) %}
+<h2>Intervention required</h2><p>{{ decision.prompt }}</p>
+<form method="post" action="/runs/{{ run.id }}/decisions/{{ decision.id }}">
+  <button name="prefer_current" value="true">Prefer current evidence</button>
+  <button name="prefer_current" value="false">Follow authored procedure</button>
+</form>
+{% when None %}
+{% if run.outcome.is_some() %}<a class="button" href="/runs/{{ run.id }}/postmortem">Open postmortem</a>{% endif %}
+{% endmatch %}
+</section>
+<section class="panel" aria-labelledby="trace-heading">
+<h2 id="trace-heading">Execution trace</h2>
+<ol class="trace" aria-live="polite">
+{% for event in events %}<li><span class="meta">#{{ event.sequence }} · {{ event.actor }}</span><br>{{ event.summary }}</li>{% endfor %}
+</ol>
+</section></div>
+{% endblock %}
+

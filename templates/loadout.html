@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Harness Loadout · Tracebound{% endblock %}
+{% block content %}
+<h1>Harness loadout</h1>
+<p>Select context costing no more than {{ scenario.context_capacity }} Focus. Total expedition Focus: {{ scenario.focus_budget }}.</p>
+{% match error %}{% when Some with (message) %}<p class="error" role="alert">{{ message }}</p>{% when None %}{% endmatch %}
+<form method="post" action="/runs/{{ run.id }}/loadout">
+  <fieldset><legend>Context inventory</legend>
+  {% for item in scenario.context %}
+  <label><input type="checkbox" name="context" value="{{ item.id }}">
+    <strong>{{ item.title }}</strong> — {{ item.cost }} Focus
+    <span class="meta">({{ item.trust }} trust, {{ item.freshness }})</span><br>{{ item.description }}
+  </label>
+  {% endfor %}
+  </fieldset>
+  <button type="submit">Lock loadout</button>
+</form>
+{% endblock %}
+
